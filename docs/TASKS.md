@@ -9,7 +9,7 @@
 - [x] Eval 31 câu × 3 lần, FastAPI, Dockerfile, CI, repo public
 
 ## Tiếp theo (làm lần lượt từ trên xuống)
-- [ ] Build và chạy thử Docker image (`docker build -t nsa .`, gọi `/health`)
+- [x] Build và chạy thử Docker image (`docker build -t nsa .`, gọi `/health`) — 404 MB, `/health` + `/ask` đúng trong container
 - [ ] Guard "một dòng = một đối tượng": so số dòng với `COUNT(DISTINCT khoá)` của đối tượng (lỗi c08/c05)
 - [ ] Thêm câu eval về scope sai cột (c12: `branch_id = "Chi nhánh TP.HCM"`) và kiểm tra scope_column có kiểu dữ liệu khớp
 - [ ] Cạnh đồ thị theo thuật ngữ được định nghĩa ("nợ xấu" → PL-3) để không phụ thuộc dẫn chiếu tường minh

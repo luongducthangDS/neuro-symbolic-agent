@@ -1,7 +1,7 @@
 # Progress
 
 ## Trạng thái (2026-11-11)
-Chạy end to end, public tại github.com/luongducthangDS/neuro-symbolic-agent, CI xanh, 28 test offline pass, API `/ask` đã smoke test live.
+Docker image build và chạy được (`docker run --env-file .env -p 8000:8000 nsa`). Chạy end to end, public tại github.com/luongducthangDS/neuro-symbolic-agent, CI xanh, 28 test offline pass, API `/ask` đã smoke test live.
 
 Eval 31 câu × 3 lần (`eval/REPORT.md`): **89/93**. Multi-hop recall: đồ thị 1,0 so với vector@10 0,883. Danh sách vi phạm đúng tuyệt đối: verifier 11/12, LLM tự phán 4/12. SQL hợp lệ ngay lần đầu 84 %, sau tự sửa 91 %. 3,2 lượt gọi LLM/câu, p50 6,9 s.
 
@@ -25,4 +25,4 @@ Eval 31 câu × 3 lần (`eval/REPORT.md`): **89/93**. Multi-hop recall: đồ t
 - c05 (1 lần): tổng nhóm người có liên quan lặp trên từng dòng nên có FAIL thừa.
 
 ## Bước tiếp theo
-Mục đầu tiên chưa tick trong `TASKS.md`: build thử Docker image.
+Mục đầu tiên chưa tick trong `TASKS.md`: guard "một dòng = một đối tượng".
