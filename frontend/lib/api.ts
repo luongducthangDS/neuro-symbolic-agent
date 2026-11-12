@@ -9,6 +9,7 @@ export async function askQuestion(question: string): Promise<AskResponse> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question }),
+    signal: AbortSignal.timeout(120000), // 2 min — LLM on free tier can take 30-60s
   });
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
