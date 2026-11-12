@@ -5,8 +5,8 @@ import VerdictBanner from "@/components/VerdictBanner";
 import RulesTable from "@/components/RulesTable";
 import TraceTimeline from "@/components/TraceTimeline";
 import ClauseGraph from "@/components/ClauseGraph";
-import { askQuestion, fetchGraph, checkHealth } from "@/lib/api";
-import type { AskResponse, GraphData, Verdict } from "@/lib/types";
+import { askQuestionStream, fetchGraph, checkHealth } from "@/lib/api";
+import type { AskResponse, GraphData, Verdict, ProgressEvent } from "@/lib/types";
 
 const SAMPLES = [
   { label: "Chi nhánh vi phạm nợ xấu",        q: "Chi nhánh nào vi phạm giới hạn tỷ lệ nợ xấu?" },
@@ -26,6 +26,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [graph, setGraph] = useState<GraphData | null>(null);
   const [healthy, setHealthy] = useState<boolean | null>(null);
+  const [progress, setProgress] = useState<ProgressEvent[]>([]);
 
   useEffect(() => {
     checkHealth().then(setHealthy);
@@ -35,9 +36,12 @@ export default function Home() {
   const submit = useCallback(async (question: string) => {
     const t = question.trim();
     if (!t || status === "loading") return;
-    setQ(t); setStatus("loading"); setResult(null); setError("");
+    setQ(t); setStatus("loading"); setResult(null); setError(""); setProgress([]);
     try {
-      setResult(await askQuestion(t));
+      const data = await askQuestionStream(t, (evt) => {
+        setProgress(prev => [...prev, evt]);
+      });
+      setResult(data);
       setStatus("done");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -191,20 +195,43 @@ export default function Home() {
 
           {/* Loading */}
           {status === "loading" && (
-            <div className="bg-white border border-slate-200 rounded-xl p-10 flex flex-col items-center gap-4">
-              <div className="flex gap-1.5">
-                {[0,1,2].map(i => (
-                  <span key={i} className="w-2 h-2 rounded-full bg-blue-500"
-                    style={{animation:`dot-pulse 1.2s ease-in-out ${i*0.2}s infinite`}}/>
-                ))}
+            <div className="bg-white border border-slate-200 rounded-xl p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex gap-1.5">
+                  {[0,1,2].map(i => (
+                    <span key={i} className="w-2 h-2 rounded-full bg-blue-500"
+                      style={{animation:`dot-pulse 1.2s ease-in-out ${i*0.2}s infinite`}}/>
+                  ))}
+                </div>
+                <p className="text-sm font-medium text-slate-600">
+                  {progress.length > 0 ? progress[progress.length - 1].label : "Đang phân tích…"}
+                </p>
               </div>
-              <div className="text-center">
-                <p className="text-sm font-medium text-slate-600">Đang phân tích câu hỏi</p>
-                <p className="text-xs text-slate-400 mt-1">Truy xuất điều khoản → tạo SQL → kiểm chứng…</p>
-              </div>
+
+              {/* Progress steps */}
+              {progress.length > 0 && (
+                <div className="space-y-1.5">
+                  {progress.map((p, i) => (
+                    <div key={i} className="flex items-center gap-2.5 text-xs">
+                      <span className="text-emerald-500 flex-shrink-0">✓</span>
+                      <span className="text-slate-500">{p.label}</span>
+                      {p.detail && (
+                        <span className="text-orange-500 truncate max-w-[200px]" title={p.detail.error}>
+                          retry #{p.detail.attempt}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                  <div className="flex items-center gap-2.5 text-xs">
+                    <span className="w-3 h-3 rounded-full border-2 border-blue-400 border-t-transparent animate-spin flex-shrink-0"/>
+                    <span className="text-slate-400">đang xử lý…</span>
+                  </div>
+                </div>
+              )}
+
               {healthy === false && (
-                <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2">
-                  Render cold start ~30s, vui lòng chờ…
+                <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-3">
+                  Render cold start ~30s…
                 </p>
               )}
             </div>

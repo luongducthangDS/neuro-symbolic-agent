@@ -65,3 +65,9 @@ export interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
 }
+
+export interface ProgressEvent {
+  node: string;
+  label: string;
+  detail?: { attempt: number; error: string };
+}
