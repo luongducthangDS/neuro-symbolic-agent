@@ -41,7 +41,13 @@ def agent() -> Agent:
 @app.get("/health")
 def health():
     a = agent()
-    return {"status": "ok", "clauses": len(a.index.clauses), "edges": len(a.index.edges()), "tables": a.db.counts}
+    return {
+        "status": "ok",
+        "clauses": len(a.index.clauses),
+        "edges": len(a.index.edges()),
+        "tables": a.db.counts,
+        "pct_columns": sorted(a.db.pct_columns),
+    }
 
 
 @app.post("/ask")
