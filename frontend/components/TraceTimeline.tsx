@@ -2,88 +2,62 @@
 import { useState } from "react";
 import type { TraceStep } from "@/lib/types";
 
-const NODE_STYLE: Record<string, string> = {
-  retrieve:     "bg-purple-500/15 text-purple-300 border-purple-500/30",
-  analyze:      "bg-blue-500/15 text-blue-300 border-blue-500/30",
-  generate_sql: "bg-orange-500/15 text-orange-300 border-orange-500/30",
-  execute_sql:  "bg-orange-500/15 text-orange-300 border-orange-500/30",
-  verify:       "bg-teal-500/15 text-teal-300 border-teal-500/30",
-  answer:       "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
-  refuse:       "bg-slate-500/15 text-slate-400 border-slate-500/30",
-  no_data:      "bg-slate-500/15 text-slate-400 border-slate-500/30",
+const NODE: Record<string, string> = {
+  retrieve:     "bg-violet-50 text-violet-700 border-violet-200",
+  analyze:      "bg-blue-50 text-blue-700 border-blue-200",
+  generate_sql: "bg-orange-50 text-orange-700 border-orange-200",
+  execute_sql:  "bg-orange-50 text-orange-700 border-orange-200",
+  verify:       "bg-teal-50 text-teal-700 border-teal-200",
+  answer:       "bg-emerald-50 text-emerald-700 border-emerald-200",
+  refuse:       "bg-slate-100 text-slate-500 border-slate-200",
+  no_data:      "bg-slate-100 text-slate-500 border-slate-200",
 };
 
-interface Props {
+export default function TraceTimeline({ trace, attempts }: {
   trace: TraceStep[];
   attempts: { sql: string; error: string | null; stage: string }[];
-}
-
-export default function TraceTimeline({ trace, attempts }: Props) {
+}) {
   const [open, setOpen] = useState(false);
   if (!trace.length) return null;
-
   const totalMs = trace.reduce((s, t) => s + t.ms, 0);
-  const retries = attempts.filter(a => a.error).length;
 
   return (
-    <div className="animate-fade-up glass rounded-2xl overflow-hidden">
+    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden animate-up">
       <button onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center justify-between px-5 py-3 hover:bg-white/[0.03] transition-colors"
+        className="w-full flex items-center justify-between px-5 py-3 hover:bg-slate-50 transition-colors text-left"
       >
-        <div className="flex items-center gap-3">
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Trace pipeline</span>
-          {retries > 0 && (
-            <span className="text-xs font-medium text-orange-400 bg-orange-500/10 border border-orange-500/20 px-2 py-0.5 rounded-full">
-              {retries} SQL retry
-            </span>
+        <div className="flex items-center gap-2.5">
+          <svg className="w-3.5 h-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Pipeline trace</span>
+          {attempts.some(a => a.error) && (
+            <span className="text-xs text-orange-600 bg-orange-50 border border-orange-200 px-2 py-0.5 rounded-full">SQL retry</span>
           )}
         </div>
-        <span className="text-xs text-slate-500 flex items-center gap-1.5">
-          <span className="text-slate-300 font-medium">{(totalMs / 1000).toFixed(1)}s</span>
-          <span>{open ? "▲" : "▼"}</span>
-        </span>
+        <span className="text-xs text-slate-400">{(totalMs / 1000).toFixed(1)}s {open ? "▲" : "▼"}</span>
       </button>
 
       {open && (
-        <div className="px-5 pb-4 border-t border-white/[0.05] pt-3 space-y-3">
-          {/* Steps */}
+        <div className="border-t border-slate-100 px-5 py-4 space-y-4">
           <div className="flex flex-wrap gap-1.5 items-center">
-            {trace.map((step, i) => {
-              const isRetry = step.node === "generate_sql" && (step.attempt as number) > 1;
-              return (
-                <div key={i} className="flex items-center gap-1.5">
-                  <span
-                    className={`text-xs px-2.5 py-1 rounded-lg font-mono border ${NODE_STYLE[step.node] ?? "bg-white/5 text-slate-400 border-white/10"} ${isRetry ? "ring-1 ring-orange-400/50" : ""}`}
-                    title={JSON.stringify(step, null, 2)}
-                  >
-                    {step.node}{step.node === "generate_sql" ? ` #${step.attempt}` : ""}
-                    <span className="ml-1 opacity-50">{step.ms}ms</span>
-                  </span>
-                  {i < trace.length - 1 && <span className="text-slate-700 text-xs">→</span>}
-                </div>
-              );
-            })}
+            {trace.map((step, i) => (
+              <div key={i} className="flex items-center gap-1.5">
+                <span className={`text-xs px-2.5 py-1 rounded-md border font-mono ${NODE[step.node] ?? "bg-slate-50 text-slate-500 border-slate-200"}`}>
+                  {step.node}{step.node === "generate_sql" ? ` #${step.attempt}` : ""}
+                  <span className="ml-1 opacity-40 text-[10px]">{step.ms}ms</span>
+                </span>
+                {i < trace.length - 1 && <span className="text-slate-300">›</span>}
+              </div>
+            ))}
           </div>
-
-          {/* SQL attempts */}
-          {attempts.length > 0 && (
-            <div className="space-y-2 mt-1">
-              {attempts.map((att, i) => (
-                <div key={i} className="rounded-xl bg-black/30 border border-white/[0.05] p-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-mono text-slate-500">attempt {i + 1}</span>
-                    {att.error
-                      ? <span className="text-xs text-red-400 bg-red-500/10 px-2 py-0.5 rounded">{att.stage}: {att.error.slice(0, 80)}{att.error.length > 80 ? "…" : ""}</span>
-                      : <span className="text-xs text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">OK</span>
-                    }
-                  </div>
-                  <pre className="text-xs text-slate-300 whitespace-pre-wrap break-all font-mono leading-relaxed">
-                    {att.sql}
-                  </pre>
-                </div>
-              ))}
+          {attempts.map((a, i) => (
+            <div key={i} className="rounded-lg border border-slate-200 overflow-hidden">
+              <div className={`px-3 py-1.5 text-xs font-medium border-b border-slate-100 flex items-center gap-2 ${a.error ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-600"}`}>
+                <span>Attempt {i + 1}</span>
+                {a.error ? <span className="font-normal opacity-70">{a.stage}: {a.error.slice(0, 80)}</span> : <span>OK</span>}
+              </div>
+              <pre className="px-3 py-2 text-xs text-slate-600 font-mono whitespace-pre-wrap break-all bg-slate-50/50 leading-relaxed">{a.sql}</pre>
             </div>
-          )}
+          ))}
         </div>
       )}
     </div>
