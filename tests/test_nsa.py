@@ -19,8 +19,8 @@ def index():
     return Index(embed_fn=bow_embed)
 
 
-NPL_SQL = ("SELECT b.name, 100.0*SUM(CASE WHEN l.days_past_due>90 THEN l.outstanding ELSE 0 END)/SUM(l.outstanding) "
-           "AS npl_pct FROM loans l JOIN branches b ON b.branch_id=l.branch_id WHERE l.status='active' GROUP BY b.name")
+NPL_SQL = ("SELECT b.branch_id, b.name, 100.0*SUM(CASE WHEN l.days_past_due>90 THEN l.outstanding ELSE 0 END)/SUM(l.outstanding) "
+           "AS npl_pct FROM loans l JOIN branches b ON b.branch_id=l.branch_id WHERE l.status='active' GROUP BY b.branch_id, b.name")
 
 
 # ------------------------------------------------------------ SQL guard
@@ -131,7 +131,7 @@ class ScriptedLLM:
         return item
 
 
-ANALYSIS = Analysis(intent="read", needs_sql=True, answerable=True, unanswerable_reason="", definitions=[], metrics=[{"name": "npl_pct", "description": "x"}],
+ANALYSIS = Analysis(intent="read", needs_sql=True, answerable=True, unanswerable_reason="", subject="branch", definitions=[], metrics=[{"name": "npl_pct", "description": "x"}],
                     rules=[Rule(metric="npl_pct", operator=">", threshold=3, unit="%", clause_id="QC-8",
                                 quote="không được vượt quá 3%")])
 
@@ -205,10 +205,84 @@ def test_api_ask_and_graph(index, db, monkeypatch):
     assert r.status_code == 200 and r.json()["verification"]["verdict"] == "FAIL"
     assert client.post("/ask", json={"question": ""}).status_code == 422
     g = client.get("/graph").json()
-    assert {"from": "QC-8", "to": "PL-3"} in g["edges"]
+    assert {"from": "QC-8", "to": "PL-3", "kind": "ref"} in g["edges"]
 
 
 def test_scope_match():
     from nsa.verifier import scope_match
     assert scope_match("Hải Phòng", "Chi nhánh Hải Phòng") and scope_match(1, "1")
     assert not scope_match(1, "10") and not scope_match("o_to", "bat_dong_san")
+
+
+def test_agent_subject_guard(index, db):
+    rate = Analysis(intent="read", needs_sql=True, answerable=True, unanswerable_reason="", subject="loan",
+                    definitions=[], metrics=[{"name": "rate_pct", "description": "x"}],
+                    rules=[Rule(metric="rate_pct", operator="<=", threshold=20, unit="%", clause_id="QC-6",
+                                quote="không được vượt quá 20%/năm")])
+    grouped = "SELECT interest_rate AS rate_pct, COUNT(*) AS n FROM loans WHERE product='tieu_dung' GROUP BY interest_rate"
+    dup = ("SELECT l.loan_id, l.interest_rate AS rate_pct FROM loans l JOIN collaterals c ON c.loan_id = l.loan_id "
+           "JOIN loans l2 ON l2.customer_id = l.customer_id WHERE l.product='oto' AND l.status='active'")
+    good = "SELECT loan_id, interest_rate AS rate_pct FROM loans WHERE product='tieu_dung' AND status='active'"
+    llm = ScriptedLLM([rate, SQLDraft(reasoning="", sql=grouped), SQLDraft(reasoning="", sql=dup),
+                       SQLDraft(reasoning="", sql=good), Narrative(answer="Có khoản vay vượt trần [QC-6].")])
+    s = Agent(llm, index, db).ask("Có bao nhiêu khoản vay tiêu dùng vượt trần lãi suất theo Điều 6?")
+    assert [a["stage"] for a in s["attempts"]] == ["columns", "subject_guard", "execute"]
+    gold = db._connect().execute("SELECT COUNT(*) FROM loans WHERE product='tieu_dung' AND status='active' "
+                                 "AND interest_rate > 20").fetchone()[0]
+    assert sum(f["status"] == "FAIL" for f in s["verification"]["facts"]) == gold
+
+
+def test_subject_guard_fires_without_rules(index, db):
+    """Guard must reject duplicated subject keys even when there are no compliance rules (e.g. c08)."""
+    no_rules = Analysis(intent="read", needs_sql=True, answerable=True, unanswerable_reason="",
+                        subject="loan", definitions=[],
+                        metrics=[{"name": "rate_pct", "description": "interest rate"}],
+                        rules=[])
+    # SQL that JOINs repayments → each loan_id repeats once per repayment row (fan-out duplicate)
+    dup_sql = ("SELECT l.loan_id, l.interest_rate AS rate_pct "
+               "FROM loans l JOIN repayments rp ON rp.loan_id = l.loan_id "
+               "WHERE l.product='tieu_dung' AND l.status='active' AND l.interest_rate > 20 "
+               "AND rp.due_date <= '2026-09-30'")
+    good_sql = ("SELECT loan_id, interest_rate AS rate_pct "
+                "FROM loans WHERE product='tieu_dung' AND status='active' AND interest_rate > 20")
+    llm = ScriptedLLM([no_rules,
+                       SQLDraft(reasoning="", sql=dup_sql),
+                       SQLDraft(reasoning="", sql=good_sql),
+                       Narrative(answer="Có 97 khoản vay tiêu dùng vượt trần lãi suất 20%.")])
+    s = Agent(llm, index, db).ask("Có bao nhiêu khoản vay tiêu dùng vượt trần lãi suất?")
+    stages = [a["stage"] for a in s["attempts"]]
+    assert "subject_guard" in stages, f"Expected subject_guard in {stages}"
+    assert s["verification"]["verdict"] != "UNVERIFIED"
+
+
+def test_scope_value_must_exist(index, db):
+    bad_scope = ANALYSIS.model_copy(update={"rules": [Rule(
+        metric="npl_pct", operator="<=", threshold=3, unit="%", clause_id="QC-8",
+        quote="không được vượt quá 3%", scope_column="branch_id", scope_value="Chi nhánh TP.HCM")]})
+    good_scope = ANALYSIS.model_copy(update={"rules": [Rule(
+        metric="npl_pct", operator="<=", threshold=3, unit="%", clause_id="QC-8",
+        quote="không được vượt quá 3%", scope_column="name", scope_value="Chi nhánh TP.HCM")]})
+    llm = ScriptedLLM([bad_scope, good_scope, SQLDraft(reasoning="", sql=NPL_SQL),
+                       Narrative(answer="TP.HCM tuân thủ [QC-8].")])
+    s = Agent(llm, index, db).ask("Chi nhánh TP.HCM có tuân thủ giới hạn tỷ lệ nợ xấu theo Điều 8 không?")
+    assert "never occurs in column branch_id" in s["rejected_rules"][0]["reason"]
+    assert s["verification"]["verdict"] == "PASS"
+    assert [f["subject"] for f in s["verification"]["facts"]] == ["name=TP.HCM"]
+
+
+def test_term_edges():
+    from nsa.kg import defined_terms
+    c = load_clauses()
+    terms = defined_terms(c)
+    assert terms["nợ xấu"] == "PL-3" and terms["ltv"] == "TS-2" and terms["vốn tự có"] == "QC-2"
+    assert "PL-3" in c["QC-10"].term_refs        # QC-10 says "nợ xấu" without citing PL-3
+    assert "PL-3" not in c["QC-8"].term_refs     # already an explicit citation, not duplicated
+
+
+def test_percent_column_passes_unit_guard(db):
+    assert db.pct_columns == {"interest_rate"}
+    clauses = {"QC-6": load_clauses()["QC-6"].render()}
+    rule = Rule(metric="interest_rate", operator="<=", threshold=20, unit="%", clause_id="QC-6",
+                quote="không được vượt quá 20%/năm")
+    assert not ground_rule(rule.model_copy(), clauses)[0]          # unknown scale: rejected
+    assert ground_rule(rule.model_copy(), clauses, db.pct_columns)[0]  # DDL says percent: accepted

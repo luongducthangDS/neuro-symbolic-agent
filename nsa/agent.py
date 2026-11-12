@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from .kg import Index
 from .sql_guard import Database
-from .verifier import (Rule, allowed_numbers, ground_rule, masked_metrics, ungrounded_numbers,
+from .verifier import (Rule, allowed_numbers, ground_rule, masked_metrics, scope_match, ungrounded_numbers,
                        ungrounded_sql_literals, verify)
 
 REPORT_DATE = "2026-09-30"
@@ -38,9 +38,16 @@ class Analysis(BaseModel):
     needs_sql: bool
     answerable: bool = Field(description="false if the database cannot contain the requested data (other period, unknown entity)")
     unanswerable_reason: str
+    subject: Literal["loan", "customer", "branch", "collateral", "company"] = Field(
+        description="granularity of the compliance check: one rule evaluation per loan/customer/branch/collateral, "
+                    "or company for a single company-wide figure")
     definitions: list[Definition]
     metrics: list[Metric]
     rules: list[Rule]
+
+
+SUBJECT_KEY = {"loan": "loan_id", "customer": "customer_id", "branch": "branch_id", "collateral": "collateral_id"}
+SUBJECT_NAME = {"customer": "full_name", "branch": "name"}  # loans/collaterals have no name: the id is the label
 
 
 class SQLDraft(BaseModel):
@@ -81,7 +88,8 @@ Tasks:
 2. needs_sql: true if answering needs numbers from the loan database.
    answerable: false if the requested data cannot exist in the database (see DATA COVERAGE), with the reason.
 3. definitions: terms from the clauses the SQL must respect (e.g. how "nợ xấu" maps to days_past_due), with clause_id.
-4. metrics: the SQL output columns needed. Use *_pct (0-100 scale) for percentages.
+4. subject: what one compliance check is about (one loan, one customer, one branch, one collateral, or the company).
+   metrics: the SQL output columns needed. Use *_pct (0-100 scale) for percentages.
 5. rules: every numeric threshold from the clauses that the question asks to check. quote MUST be copied
    verbatim from the clause and contain the threshold. If a rule applies only to a subset (e.g. related
    parties, a collateral type), set scope_column (a column the SQL will output) and scope_value.
@@ -194,7 +202,13 @@ class Agent:
         a: Analysis = self.llm.json(prompt, Analysis, SYS)
         kept, rejected = [], []
         for r in a.rules:
-            ok, why = ground_rule(r, clauses)
+            ok, why = ground_rule(r, clauses, self.db.pct_columns)
+            if ok and r.scope_column:
+                vals = self.db.column_values(r.scope_column)
+                if vals is not None and not any(scope_match(v, r.scope_value) for v in vals):
+                    sample = sorted({str(v) for v in vals})[:8]
+                    ok, why = False, (f"scope value {r.scope_value!r} never occurs in column {r.scope_column} "
+                                      f"(values look like {sample}); pick the column that holds it")
             d = r.model_dump() | ({} if ok else {"reason": why})
             if r._operator_llm:
                 d["operator_llm"] = r._operator_llm
@@ -208,6 +222,13 @@ class Agent:
         cols = [m["name"] for m in s["analysis"]["metrics"]]
         for r in s.get("rules", []):
             for c in (r["metric"], r.get("scope_column")):
+                if c and c not in cols:
+                    cols.append(c)
+        subject = s["analysis"].get("subject", "company")
+        if subject != "company" and s["analysis"].get("needs_sql"):
+            # Always require the subject key so the duplicate-row guard can fire even without rules.
+            # The name column (when available) makes FAIL lines readable.
+            for c in (SUBJECT_KEY.get(subject), SUBJECT_NAME.get(subject)):
                 if c and c not in cols:
                     cols.append(c)
         return cols
@@ -240,7 +261,17 @@ class Agent:
             need = self.required_columns(s)
             missing = [m for m in need if m not in res["columns"]]
             masked = masked_metrics(tree, need)
-            if masked:
+            subject = s["analysis"].get("subject", "company")
+            key = SUBJECT_KEY.get(subject)  # None for company-level queries
+            dup = (key is not None and key in res["columns"] and
+                   len({r[res["columns"].index(key)] for r in res["rows"]}) != len(res["rows"]))
+            if dup:
+                res = {"ok": False, "stage": "subject_guard",
+                       "error": f"Each row must represent exactly one {s['analysis']['subject']}: "
+                                f"{key} values repeat (got {len(res['rows'])} rows but only "
+                                f"{len({r[res['columns'].index(key)] for r in res['rows']})} distinct {key}s). "
+                                f"GROUP BY {key} (or do not group by other columns) so each subject appears once."}
+            elif masked:
                 res = {"ok": False, "stage": "masking_guard",
                        "error": f"Metric columns {masked} are wrapped in COALESCE/IFNULL. If no rows match, "
                                 "the data does not exist; do not substitute a default value."}
