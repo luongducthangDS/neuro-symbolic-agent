@@ -96,14 +96,30 @@ def bow_embed(texts: list[str], dim: int = 1024) -> list[list[float]]:
     return out
 
 
+_EMBED_CLIENTS: list = []
+
+
 def gemini_embed(texts: list[str], task: str) -> list[list[float]]:
+    """Same 429 policy as generation: rotate keys, then wait the server's retryDelay."""
     from google import genai
     from google.genai import types
 
-    client = genai.Client()
-    r = client.models.embed_content(model="gemini-embedding-001", contents=texts,
-                                    config=types.EmbedContentConfig(task_type=task))
-    return [e.values for e in r.embeddings]
+    if not _EMBED_CLIENTS:
+        _EMBED_CLIENTS.extend(genai.Client(api_key=os.environ[k]) for k in
+                              ("GOOGLE_API_KEY", "GOOGLE_API_KEY_2", "GOOGLE_API_KEY_3") if os.getenv(k))
+    cfg = types.EmbedContentConfig(task_type=task)
+    for attempt in range(4 * len(_EMBED_CLIENTS)):
+        client = _EMBED_CLIENTS[attempt % len(_EMBED_CLIENTS)]
+        try:
+            r = client.models.embed_content(model="gemini-embedding-001", contents=texts, config=cfg)
+            return [e.values for e in r.embeddings]
+        except Exception as e:
+            if "429" not in str(e) or attempt == 4 * len(_EMBED_CLIENTS) - 1:
+                raise
+            if (attempt + 1) % len(_EMBED_CLIENTS) == 0:
+                m = re.search(r"retry in ([\d.]+)s", str(e))
+                time.sleep(min(float(m.group(1)) + 1, 65) if m else 20)
+    raise RuntimeError("unreachable")
 
 
 def embed(texts: list[str], task: str = "RETRIEVAL_DOCUMENT") -> list[list[float]]:

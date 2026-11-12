@@ -29,7 +29,8 @@ class Clause:
     doc: str           # e.g. "Quy chế cho vay"
     title: str
     text: str
-    refs: list[str] = field(default_factory=list)
+    refs: list[str] = field(default_factory=list)       # explicit "theo Điều X" citations
+    term_refs: list[str] = field(default_factory=list)  # uses a term that another clause defines
 
     def render(self) -> str:
         return f"[{self.id}] {self.doc}, Điều {self.id.split('-')[1]}. {self.title}: {self.text}"
@@ -54,7 +55,27 @@ def load_clauses(policy_dir: Path = POLICY_DIR) -> dict[str, Clause]:
             clauses[cid] = Clause(cid, doc, h.group(2), text, refs)
     for c in clauses.values():  # drop dangling refs
         c.refs = [r for r in c.refs if r in clauses]
+    definers = defined_terms(clauses)
+    for c in clauses.values():
+        low = c.text.lower()
+        for term, cid in definers.items():
+            if cid != c.id and cid not in c.refs and cid not in c.term_refs and re.search(rf"(?<!\w){re.escape(term)}(?!\w)", low):
+                c.term_refs.append(cid)
     return clauses
+
+
+def defined_terms(clauses: dict[str, Clause]) -> dict[str, str]:
+    """term -> clause that defines it: a clause opening with "<Term> là ...", or "<long name> (ACRONYM)"."""
+    out = {}
+    for c in clauses.values():
+        m = re.match(r"([^.,;:()]{3,60}?) là ", c.text)
+        if m and " của " not in m.group(1) and len(m.group(1).split()) <= 6:
+            out[m.group(1).lower()] = c.id
+        m = re.match(r"([^.,;:()]{3,80}?) \(([A-Z]{2,})\)", c.text)
+        if m:
+            out[m.group(1).lower()] = c.id
+            out[m.group(2).lower()] = c.id
+    return out
 
 
 def _cos(a: list[float], b: list[float]) -> float:
@@ -66,6 +87,7 @@ class Index:
         self.clauses = clauses or load_clauses()
         self.embed_fn = embed_fn or embed
         self.ids = list(self.clauses)
+        self._qcache: dict[str, list[float]] = {}
         self.vecs = self._doc_vectors()
 
     def _doc_vectors(self) -> list[list[float]]:
@@ -83,16 +105,18 @@ class Index:
         return vecs
 
     def _query_vec(self, q: str) -> list[float]:
-        if self.embed_fn is embed:
-            return embed([q], task="RETRIEVAL_QUERY")[0]
-        return self.embed_fn([q])[0]
+        if q not in self._qcache:
+            if len(self._qcache) >= 512:  # ponytail: clear-all bound, LRU if hit rate ever matters
+                self._qcache.clear()
+            self._qcache[q] = (embed([q], task="RETRIEVAL_QUERY") if self.embed_fn is embed else self.embed_fn([q]))[0]
+        return self._qcache[q]
 
     def vector_search(self, q: str, k: int) -> list[tuple[str, float]]:
         qv = self._query_vec(q)
         scored = sorted(((i, _cos(qv, v)) for i, v in zip(self.ids, self.vecs)), key=lambda x: -x[1])
         return scored[:k]
 
-    def retrieve(self, q: str, k: int = 3, hops: int = 3, max_nodes: int = 10) -> list[dict]:
+    def retrieve(self, q: str, k: int = 3, hops: int = 3, max_nodes: int = 10, terms: bool = True) -> list[dict]:
         """Vector seeds + BFS along reference edges. Returns [{id, via, score}] in order."""
         hits = [{"id": i, "via": "vector", "score": round(s, 4)} for i, s in self.vector_search(q, k)]
         seen = {h["id"] for h in hits}
@@ -100,13 +124,14 @@ class Index:
         for hop in range(1, hops + 1):
             nxt = []
             for cid in frontier:
-                for r in self.clauses[cid].refs:
+                for r in self.clauses[cid].refs + (self.clauses[cid].term_refs if terms else []):
                     if r not in seen and len(hits) < max_nodes:
                         seen.add(r)
-                        hits.append({"id": r, "via": f"ref<-{cid} (hop {hop})", "score": None})
+                        kind = "ref" if r in self.clauses[cid].refs else "term"
+                        hits.append({"id": r, "via": f"{kind}<-{cid} (hop {hop})", "score": None})
                         nxt.append(r)
             frontier = nxt
         return hits
 
-    def edges(self) -> list[tuple[str, str]]:
-        return [(c.id, r) for c in self.clauses.values() for r in c.refs]
+    def edges(self, terms: bool = False) -> list[tuple[str, str]]:
+        return [(c.id, r) for c in self.clauses.values() for r in c.refs + (c.term_refs if terms else [])]

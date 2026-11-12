@@ -41,6 +41,9 @@ class Database:
         self.indexed = {t: sorted({r[2] for idx in con.execute(f"PRAGMA index_list({t})")
                                    for r in con.execute(f"PRAGMA index_info({idx[1]})")}) for t in self.tables}
         self.ddl = [r[0] for r in con.execute("SELECT sql FROM sqlite_master WHERE type='table'")]
+        # columns whose DDL comment declares a percent scale, e.g. "interest_rate REAL, -- percent per year"
+        self.pct_columns = frozenset(line.split()[0] for t in self.ddl for line in t.splitlines()
+                                     if "-- percent" in line and line.split())
         self.enums = {}
         for t, cols in self.tables.items():
             for c, typ in cols.items():
@@ -56,6 +59,17 @@ class Database:
         if authorize:
             con.set_authorizer(_authorizer)
         return con
+
+    def column_values(self, column: str) -> list | None:
+        """Distinct values of a real column (None if no table has it). Used to validate rule scopes."""
+        for t, cols in self.tables.items():
+            if column in cols:
+                con = self._connect(authorize=False)
+                try:  # ponytail: 2,000 distinct values is plenty for scope checks on this schema
+                    return [r[0] for r in con.execute(f"SELECT DISTINCT {column} FROM {t} LIMIT 2000")]
+                finally:
+                    con.close()
+        return None
 
     def schema_prompt(self) -> str:
         lines = [*self.ddl, "-- row counts: " + ", ".join(f"{t}={n}" for t, n in self.counts.items())]

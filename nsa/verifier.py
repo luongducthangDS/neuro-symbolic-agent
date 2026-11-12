@@ -58,7 +58,7 @@ def parse_numbers(text: str) -> list[tuple[str, list[float], int]]:
     return out
 
 
-def ground_rule(rule: Rule, clauses: dict[str, str]) -> tuple[bool, str]:
+def ground_rule(rule: Rule, clauses: dict[str, str], pct_columns: frozenset = frozenset()) -> tuple[bool, str]:
     text = clauses.get(rule.clause_id)
     if text is None:
         return False, f"clause {rule.clause_id} was not retrieved"
@@ -71,8 +71,8 @@ def ground_rule(rule: Rule, clauses: dict[str, str]) -> tuple[bool, str]:
         if len(found) != 1:
             return False, f"threshold {rule.threshold:g} does not appear in the quote"
         rule._threshold_llm, rule.threshold = rule.threshold, found.pop()
-    if rule.unit == "%" and not rule.metric.endswith("_pct"):
-        return False, "percentage rule must target a *_pct metric (unit mismatch guard)"
+    if rule.unit == "%" and not (rule.metric.endswith("_pct") or rule.metric in pct_columns):
+        return False, "percentage rule must target a *_pct metric or a column stored in percent (unit mismatch guard)"
     op = compliance_operator(rule.quote)
     if op is None:
         return False, "cannot determine the comparison direction from the quote"
