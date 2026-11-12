@@ -3,18 +3,13 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Compliance Agent — An Phát Finance",
-  description:
-    "Neuro-symbolic agent kiểm tra tuân thủ tín dụng: GraphRAG + Text-to-SQL + symbolic verifier",
+  description: "Neuro-symbolic AI: GraphRAG + Text-to-SQL + Symbolic Verifier cho kiểm tra tuân thủ tín dụng",
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="vi">
-      <body className="bg-gray-100 min-h-screen antialiased">{children}</body>
+      <body>{children}</body>
     </html>
   );
 }
