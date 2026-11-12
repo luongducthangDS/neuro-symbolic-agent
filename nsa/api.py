@@ -1,16 +1,29 @@
 """FastAPI service. Run: uvicorn nsa.api:app --port 8000"""
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 
 from fastapi import FastAPI, HTTPException
 from fastapi.concurrency import run_in_threadpool
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .agent import Agent
 from .llm import get_llm
 
 app = FastAPI(title="Neuro-Symbolic Agent", version="1.0")
+
+# Allow the Cloudflare Pages frontend (and local dev) to call the API.
+# CORS_ORIGINS env var is a comma-separated list; defaults to allow all origins.
+_origins_env = os.getenv("CORS_ORIGINS", "*")
+_origins = [o.strip() for o in _origins_env.split(",")] if _origins_env != "*" else ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
 
 
 class Ask(BaseModel):
@@ -46,4 +59,5 @@ async def ask(body: Ask):
 def graph():
     a = agent()
     return {"nodes": [{"id": c.id, "doc": c.doc, "title": c.title} for c in a.index.clauses.values()],
-            "edges": [{"from": x, "to": y} for x, y in a.index.edges()]}
+            "edges": [{"from": x, "to": y, "kind": "ref" if y in a.index.clauses[x].refs else "term"}
+                      for x, y in a.index.edges(terms=True)]}

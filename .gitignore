@@ -6,3 +6,9 @@ data/*.db
 data/embeddings.json
 .pytest_cache/
 eval/*.log
+
+# frontend
+frontend/.next/
+frontend/node_modules/
+frontend/out/
+frontend/.env.local
