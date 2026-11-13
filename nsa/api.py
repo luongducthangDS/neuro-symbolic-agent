@@ -8,7 +8,7 @@ from functools import lru_cache
 from fastapi import FastAPI, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .agent import Agent
@@ -108,6 +108,12 @@ def _stream_ask(question: str):
 
     yield _sse("result", out)
     yield _sse("done", {})
+
+
+@app.get("/", include_in_schema=False)
+def root():
+    # ponytail: API-only service; the UI lives on Cloudflare Pages.
+    return RedirectResponse("/docs")
 
 
 @app.get("/health")
